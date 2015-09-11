@@ -30,6 +30,13 @@ class CreditCardSanitizerTest < MiniTest::Test
         assert_equal 'My cc is 411111▇▇▇▇▇▇1111, I repeat, 411111▇▇▇▇▇▇1111', @sanitizer.sanitize!('My cc is 4111111111111111, I repeat, 4111111111111111')
       end
 
+      it "finishes in a reasonable amount of time with spacey input" do
+        input = "Hello  0      0      0     14     20      1      1     20     34      9      1      0      0      0      0      0"
+        Timeout.timeout(3) do
+          assert_nil @sanitizer.sanitize!(input)
+        end
+      end
+
       it "has a configurable replacement character" do
         sanitizer = CreditCardSanitizer.new(replacement_token: '*')
         assert_equal 'Hello 4111 11**** **111 1 there', sanitizer.sanitize!('Hello 4111 111111 11111 1 there')
@@ -90,6 +97,13 @@ class CreditCardSanitizerTest < MiniTest::Test
         assert_nil @sanitizer.sanitize!("(http://support.zendesk.com/tickets/4111111111111111)")
       end
 
+      it "does not sanitize credit card numbers that start with +" do
+        assert_nil @sanitizer.sanitize!("+4111111111111111")
+        assert_nil @sanitizer.sanitize!("blah blah  +4111111111111111.json")
+        assert_nil @sanitizer.sanitize!("\"+4111111111111111\"")
+        assert_nil @sanitizer.sanitize!("(+4111111111111111)")
+      end
+
       it "does not mutate the text when there is a url" do
         url = "http://support.zendesk.com/tickets/4111111111111111"
         assert_nil @sanitizer.sanitize!(url)
@@ -110,6 +124,11 @@ class CreditCardSanitizerTest < MiniTest::Test
         assert_equal "4111 11▇▇ ▇▇▇▇ 1111 3-15", @sanitizer.sanitize!("4111 1111 1111 1111 3-15")
         assert_equal "4111 11▇▇ ▇▇▇▇ 1111 3-2015", @sanitizer.sanitize!("4111 1111 1111 1111 3-2015")
         assert_equal "4111 11▇▇ ▇▇▇▇ 1111 03-2015 asdbhasd", @sanitizer.sanitize!("4111 1111 1111 1111 03-2015 asdbhasd")
+      end
+
+      it "does not sanitize a credit card number immediately followed by digits" do
+        assert_nil @sanitizer.sanitize!("41111111111111112")
+        assert_nil @sanitizer.sanitize!("411111111111111123456789")
       end
     end
 
