@@ -37,6 +37,9 @@ class CreditCardSanitizer
     'laser'              => [[4, 4, 4, 4]]
   }
 
+  ACCEPTED_PREFIX = %w(card cc).freeze
+  ACCEPTED_POSTFIX = %w(ex).freeze
+
   VALID_COMPANY_PREFIXES = Regexp.union(*CARD_COMPANIES.values)
   EXPIRATION_DATE = /\s(?:0?[1-9]|1[0-2])(?:\/|-)(?:\d{4}|\d{2})(?:\D|$)/
   LINE_NOISE_CHAR = /[^\w\n,()&.\/:;<>]/
@@ -44,8 +47,6 @@ class CreditCardSanitizer
   NONEMPTY_LINE_NOISE = /#{LINE_NOISE_CHAR}{1,5}/
   SCHEME_OR_PLUS = /((?:&#43;|\+)|(?:[a-zA-Z][\-+.a-zA-Z\d]{,9}):[^\s>]+)/
   NUMBERS_WITH_LINE_NOISE = /#{SCHEME_OR_PLUS}?\d(?:#{LINE_NOISE}\d){10,30}/
-  HTML_TAGS = /(<\w+(?:(?:\s+\w+(?:\s*=\s*(?:".*?"|'.*?'|[\^'">\s]+))?)+\s*|\s*)>)/
-  SKIP_HTML_TAGS = Regexp.union(HTML_TAGS, NUMBERS_WITH_LINE_NOISE)
 
   DEFAULT_OPTIONS = {
     replacement_token: '▇',
@@ -53,7 +54,7 @@ class CreditCardSanitizer
     expose_last: 4,
     use_groupings: false,
     exclude_tracking_numbers: false,
-    exclude_html_tags: false
+    parse_flanking: false
   }
 
   attr_reader :settings
@@ -95,15 +96,16 @@ class CreditCardSanitizer
 
     text.force_encoding(Encoding::UTF_8)
     text.scrub!('�')
-    regex = options[:exclude_html_tags] ? SKIP_HTML_TAGS : NUMBERS_WITH_LINE_NOISE
     redacted = nil
+
     without_expiration(text) do
-      text.gsub!(regex) do |match|
-        next match if $1 || $2
+      text.gsub!(NUMBERS_WITH_LINE_NOISE) do |match|
+        next match if $1
 
         candidate = Candidate.new(match, match.tr('^0-9', ''))
+        options.merge!(prefix: $`, postfix: $')
 
-        if valid_numbers?(candidate, options)
+        if valid_numbers?(candidate, options) && valid_context?(options)
           redacted = true
           redact_numbers(candidate, options)
         else
@@ -138,7 +140,7 @@ class CreditCardSanitizer
 
   private
 
-  def valid_prefix?(numbers)
+  def valid_company_prefix?(numbers)
     !!(numbers =~ VALID_COMPANY_PREFIXES)
   end
 
@@ -170,7 +172,22 @@ class CreditCardSanitizer
   end
 
   def valid_numbers?(candidate, options)
-    LuhnChecksum.valid?(candidate.numbers) && valid_prefix?(candidate.numbers) && valid_grouping?(candidate, options) && !is_tracking?(candidate, options)
+    LuhnChecksum.valid?(candidate.numbers) && valid_company_prefix?(candidate.numbers) && valid_grouping?(candidate, options) && !is_tracking?(candidate, options)
+  end
+
+  def valid_context?(options)
+    return true if valid_prefix?(options[:prefix]) && valid_postfix?(options[:postfix])
+    !options[:parse_flanking]
+  end
+
+  def valid_prefix?(prefix)
+    return true if prefix.nil? || prefix.downcase.end_with?(*ACCEPTED_PREFIX)
+    !!/[^[:alnum:]]/.match(prefix[-1])
+  end
+
+  def valid_postfix?(postfix)
+    return true if postfix.nil? || postfix.downcase.start_with?(*ACCEPTED_POSTFIX)
+    !!/[^[:alnum:]]/.match(postfix[0])
   end
 
   def redact_numbers(candidate, options)
